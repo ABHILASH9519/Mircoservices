@@ -6,7 +6,7 @@ A workspace for new, self-contained microservice projects. Each project lives in
 
 | Project | Description | Status |
 |---|---|---|
-| [Project Relay — Cross-Application Transaction Network](<Project Relay — Cross-Application Transaction Network/>) | Cross-Application Transaction Network | Project directory created |
+| [Project Relay — Cross-Application Transaction Network](<Project Relay — Cross-Application Transaction Network/>) | Cross-Application Transaction Network | Initial implementation · 6 local tests passed |
 
 ## Organization
 

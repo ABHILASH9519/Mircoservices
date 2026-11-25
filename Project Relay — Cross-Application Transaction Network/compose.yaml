@@ -1,0 +1,50 @@
+name: project-relay
+services:
+  relay-api:
+    build: .
+    command: ["python", "-m", "relay.api"]
+    environment:
+      RELAY_TOKEN: ${RELAY_TOKEN:?generate a private relay token}
+    ports:
+      - "127.0.0.1:8090:8080"
+    volumes:
+      - relay-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  relay-worker:
+    build: .
+    command: ["python", "-m", "relay.worker"]
+    environment:
+      INVENTORY_SIGNING_KEY: ${INVENTORY_SIGNING_KEY:?generate a private inventory key}
+      FULFILLMENT_SIGNING_KEY: ${FULFILLMENT_SIGNING_KEY:?generate a private fulfillment key}
+    volumes:
+      - relay-data:/data
+    depends_on:
+      relay-api:
+        condition: service_healthy
+    restart: on-failure
+  inventory:
+    build: .
+    command: ["python", "-m", "relay.consumer"]
+    environment:
+      APPLICATION_NAME: inventory
+      SIGNING_KEY: ${INVENTORY_SIGNING_KEY:?generate a private inventory key}
+    volumes:
+      - inventory-data:/data
+    restart: on-failure
+  fulfillment:
+    build: .
+    command: ["python", "-m", "relay.consumer"]
+    environment:
+      APPLICATION_NAME: fulfillment
+      SIGNING_KEY: ${FULFILLMENT_SIGNING_KEY:?generate a private fulfillment key}
+    volumes:
+      - fulfillment-data:/data
+    restart: on-failure
+volumes:
+  relay-data:
+  inventory-data:
+  fulfillment-data:
