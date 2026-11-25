@@ -1,0 +1,7 @@
+[
+  {"ParameterKey":"VpcId","ParameterValue":"REPLACE_WITH_YOUR_VPC_ID"},
+  {"ParameterKey":"SubnetId","ParameterValue":"REPLACE_WITH_YOUR_PUBLIC_SUBNET_ID"},
+  {"ParameterKey":"InstanceType","ParameterValue":"t3.micro"},
+  {"ParameterKey":"VolumeSize","ParameterValue":"20"},
+  {"ParameterKey":"ProjectRevision","ParameterValue":"REPLACE_WITH_FULL_PUBLIC_COMMIT_SHA"}
+]

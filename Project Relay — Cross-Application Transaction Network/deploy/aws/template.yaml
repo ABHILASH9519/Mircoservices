@@ -1,0 +1,181 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Project Relay single-host AWS reference deployment with four Docker Compose services and encrypted local storage.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: Single EC2 host keeps the SQLite outbox accessible to the API and worker.
+    must:
+      - Use a customer-owned public subnet with outbound internet access.
+      - Access the loopback API through AWS Systems Manager Session Manager.
+      - Back up application data before replacing or deleting the host.
+    ref:
+      - at: README.md
+        has: AWS deployment prerequisites, verification and data lifecycle
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC containing the selected subnet.
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Existing public subnet with an internet gateway route.
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t3.small, t3a.micro, t3a.small]
+    Description: Choose an available x86 burstable instance with standard CPU credits.
+  UbuntuAmiParameter:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: /aws/service/canonical/ubuntu/server/noble/stable/current/amd64/hvm/ebs-gp3/ami-id
+    Description: Canonical Ubuntu 24.04 LTS x86_64 public AMI parameter.
+  VolumeSize:
+    Type: Number
+    Default: 20
+    MinValue: 20
+    MaxValue: 100
+    Description: Encrypted gp3 root volume size in GiB.
+  ProjectRevision:
+    Type: String
+    AllowedPattern: '^[a-fA-F0-9]{40}$'
+    Description: Full public GitHub commit SHA containing this project and deployment files.
+
+Resources:
+  HostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: The host downloads packages and connects to Systems Manager using outbound connections.
+        must:
+          - No inbound SSH, API, or consumer ports.
+    Properties:
+      GroupDescription: Project Relay outbound web and management traffic only
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Project
+          Value: ProjectRelay
+
+  HostRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Allows the managed host to register with Systems Manager without static credentials.
+        must:
+          - Only the EC2 service may assume this role.
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+
+  HostProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref HostRole
+
+  RelayHost:
+    Type: AWS::EC2::Instance
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: One instance supports local shared SQLite and independent consumer volumes with minimal infrastructure.
+        must:
+          - HTTP API port 8090 must remain loopback-only.
+          - Containers do not need AWS instance credentials.
+          - Docker named volumes live on root EBS storage. Back them up before stack deletion.
+          - User data is a first-boot installer. Deploy the template as a new stack.
+    Properties:
+      ImageId: !Ref UbuntuAmiParameter
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref HostProfile
+      CreditSpecification:
+        CPUCredits: standard
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          AssociatePublicIpAddress: true
+          SubnetId: !Ref SubnetId
+          GroupSet:
+            - !Ref HostSecurityGroup
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+        HttpPutResponseHopLimit: 1
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: !Ref VolumeSize
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-relay'
+        - Key: Project
+          Value: ProjectRelay
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          umask 077
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y ca-certificates curl python3
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL --retry 4 https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          chmod a+r /etc/apt/keyrings/docker.asc
+          arch=$(dpkg --print-architecture)
+          . /etc/os-release
+          cat > /etc/apt/sources.list.d/docker.sources <<DOCKER
+          Types: deb
+          URIs: https://download.docker.com/linux/ubuntu
+          Suites: $VERSION_CODENAME
+          Components: stable
+          Architectures: $arch
+          Signed-By: /etc/apt/keyrings/docker.asc
+          DOCKER
+          chmod a+r /etc/apt/sources.list.d/docker.sources
+          apt-get update
+          apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+          systemctl enable --now docker
+          if ! snap list amazon-ssm-agent >/dev/null 2>&1; then
+            snap install amazon-ssm-agent --classic
+          fi
+          snap start --enable amazon-ssm-agent
+
+          # Only the chosen project folder is installed from the pinned repository revision.
+          temp_dir=$(mktemp -d)
+          trap 'rm -rf "$temp_dir"' EXIT
+          curl -fsSL --retry 4 "https://github.com/ABHILASH9519/Mircoservices/archive/${ProjectRevision}.tar.gz" -o "$temp_dir/release.tar.gz"
+          mkdir "$temp_dir/source"
+          tar -xzf "$temp_dir/release.tar.gz" -C "$temp_dir/source" --strip-components=1
+          project="$temp_dir/source/Project Relay — Cross-Application Transaction Network"
+          test -f "$project/compose.yaml"
+          test -f "$project/deploy/aws/start-host.sh"
+          install -d -m 0750 /opt/project-relay
+          cp -a "$project/." /opt/project-relay/
+          bash /opt/project-relay/deploy/aws/start-host.sh
+
+Outputs:
+  InstanceId:
+    Description: Select this managed instance in Systems Manager.
+    Value: !Ref RelayHost
+  ApiPort:
+    Description: Loopback port to forward through Session Manager.
+    Value: '8090'
+  ProjectPath:
+    Description: Project directory on the EC2 instance.
+    Value: /opt/project-relay

@@ -112,6 +112,17 @@ Only the `orders / order.submitted` event contract is accepted for this first im
 | `run.sh`, `run.ps1` | Project-specific launchers |
 | `tests/` | Regression and loopback integration tests |
 
+## Optional cloud deployment
+
+An AWS deployment profile is available for users who want to run Project Relay in their own AWS account. The CloudFormation template and Python management script build and launch the existing four Compose services on an encrypted EC2 host. Access uses Systems Manager port forwarding.
+
+- [AWS deployment guide](deploy/aws/README.md)
+- [CloudFormation template](deploy/aws/template.yaml)
+- [Deployment and management script](deploy/aws/manage.py)
+- [AWS Compose configuration](deploy/aws/compose.aws.yaml)
+
+The cloud infrastructure files are prepared for future execution. No AWS resources have been created or deployed as part of this project update.
+
 ## Verification and scope
 
 ```sh
